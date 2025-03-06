@@ -55,33 +55,25 @@ class PolicyGradientAgent:
         self.rewards = []
 
     def select_action(self, state):
-        """
-        Selects an action based on the current state.
-        Normalizes the state, computes logits, checks for NaNs,
-        and samples an action from the resulting categorical distribution.
-        """
+        # Normalize state to prevent extreme values
         norm_state = np.array([state[0] / 100.0, state[1], state[2] / 100.0], dtype=np.float32)
+
+        # Check for NaN or infinite values in the state
+        if np.any(np.isnan(norm_state)) or np.any(np.isinf(norm_state)):
+            print("Warning: State contains NaN or Inf:", state)
+            return 0  # Default action (e.g., hold)
+
+        # Convert to tensor and get logits
         state_t = torch.FloatTensor(norm_state).unsqueeze(0)
-
-        # If NaNs occur, warn and use default action.
-        if torch.isnan(state_t).any():
-            print("Warning: normalized state contains NaN:", norm_state)
-            state_t = torch.nan_to_num(state_t, nan=0.0, posinf=1e6, neginf=-1e6)
-
         logits = self.policy_net(state_t)
+
+        # Check for NaN in logits
         if torch.isnan(logits).any():
-            print("Warning: logits contain NaN. State:", norm_state, "Logits:", logits)
-            dummy = torch.tensor(0.0, requires_grad=True)
-            self.log_probs.append(dummy)
-            return 0  # default to hold
+            print("Warning: Logits contain NaN. State:", norm_state, "Logits:", logits)
+            return 0  # Default action (e.g., hold)
 
+        # Compute probabilities and sample action
         probs = torch.softmax(logits, dim=1)
-        if torch.isnan(probs).any():
-            print("Warning: probabilities contain NaN. Logits:", logits)
-            dummy = torch.tensor(0.0, requires_grad=True)
-            self.log_probs.append(dummy)
-            return 0  # default to hold
-
         dist = torch.distributions.Categorical(probs)
         action = dist.sample()
         self.log_probs.append(dist.log_prob(action))

@@ -2,10 +2,9 @@
 main_static_rl.py
 
 This script trains a policy network in a supervised manner using static data
-produced by the TF pricing model. It loads prepared_data.xlsx, which contains
-the original columns including ttm_days, computes an 'optimal'
-conversion decision for each data point, and trains a classifier to replicate
-that decision. The trained model is saved to the data folder.
+from the TF pricing model. It loads data from an Excel file, computes optimal
+conversion decisions, trains a classifier to predict these decisions, and saves
+the model. Training time is tracked and reported.
 """
 
 import pandas as pd
@@ -13,15 +12,17 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
+import time
 
 
 class StaticPolicyNetwork(nn.Module):
     """
-    A simple feed-forward classifier network that takes [S, ttm_years, Estimated_Price]
-    as input and outputs logits for two classes: 0 (hold) or 1 (convert).
+    A feed-forward neural network classifier that predicts conversion decisions.
+    Input: [stock price, time-to-maturity in years, estimated price]
+    Output: Logits for two classes: 0 (hold) or 1 (convert)
     """
 
-    def __init__(self, input_dim=3, hidden_dim=32, output_dim=2):
+    def __init__(self, input_dim=3, hidden_dim=128, output_dim=2):
         super().__init__()
         self.fc1 = nn.Linear(input_dim, hidden_dim)
         self.fc2 = nn.Linear(hidden_dim, hidden_dim)
@@ -29,6 +30,7 @@ class StaticPolicyNetwork(nn.Module):
         self._init_weights()
 
     def _init_weights(self):
+        # Xavier initialization for better training stability
         nn.init.xavier_uniform_(self.fc1.weight)
         nn.init.zeros_(self.fc1.bias)
         nn.init.xavier_uniform_(self.fc2.weight)
@@ -39,65 +41,64 @@ class StaticPolicyNetwork(nn.Module):
     def forward(self, x):
         x = torch.relu(self.fc1(x))
         x = torch.relu(self.fc2(x))
-        return self.fc3(x)
+        return self.fc3(x)  # Returns logits
 
 
 def main():
-    # 1) Load static data produced by the TF pricing model.
-    #    Use prepared_data.xlsx because it contains ttm_days.
-    data_file = "data/model_price_all.xlsx"
-    data = pd.read_excel(data_file)
+    # Record start time to measure training duration
+    start_time = time.time()
 
-    # 2) Ensure ttm_days is present. (It should be.)
+    # Load static data from TF pricing model
+    data = pd.read_excel("data/model_price_all.xlsx")
+
+    # Handle time-to-maturity (ttm)
     if 'ttm_days' not in data.columns:
-        print("'ttm_days' column not found in prepared_data.xlsx. Setting default ttm_days = 365.")
+        print("'ttm_days' column not found. Defaulting to 365 days.")
         data["ttm_days"] = 365.0
+    data["ttm_years"] = data["ttm_days"] / 365.0  # Convert days to years
 
-    # 3) Convert ttm_days to ttm_years.
-    data["ttm_years"] = data["ttm_days"] / 365.0
+    # Compute conversion value correctly using per-row conversion price (cv)
+    par = 100.0  # Par value of the bond
+    data["conversion_value"] = data["S"] * (par / data["cv"])
 
-    # 4) Compute an 'optimal' conversion decision.
-    #    We define conversion value as (S / K) * par, with K = 100 and par = 100.
-    K = 100.0
-    par = 100.0
-    data["conversion_value"] = (data["S"] / K) * par
-
-    # 5) Create labels: if conversion_value > Estimated_Price then label 1 (convert), else 0 (hold).
-    #    If Estimated_Price is not present in prepared_data.xlsx, you might need to merge it from model_price_all.xlsx.
-    #    For now, we'll assume prepared_data.xlsx includes Estimated_Price.
-    if "Estimated_Price" not in data.columns:
-        print("Estimated_Price column not found in prepared_data.xlsx. Cannot compute labels.")
-        return
-
+    # Define labels: 1 (convert) if conversion value > estimated price, else 0 (hold)
     data["label"] = (data["conversion_value"] > data["Estimated_Price"]).astype(int)
 
-    # 6) Define state vector: [S, ttm_years, Estimated_Price]
+    # Prepare features and labels
     features = data[["S", "ttm_years", "Estimated_Price"]].values.astype(np.float32)
     labels = data["label"].values.astype(np.int64)
 
-    # 7) Create PyTorch tensors.
+    # Convert to PyTorch tensors
     X = torch.FloatTensor(features)
     y = torch.LongTensor(labels)
 
-    # 8) Initialize the network, loss, and optimizer.
-    model = StaticPolicyNetwork(input_dim=3, hidden_dim=32, output_dim=2)
+    # Initialize the network, loss function, and optimizer
+    model = StaticPolicyNetwork(
+        input_dim=3,
+        hidden_dim=128,  # Increased from a smaller value (e.g., 32) for more capacity
+        output_dim=2
+    )
     criterion = nn.CrossEntropyLoss()
     optimizer = optim.Adam(model.parameters(), lr=1e-3)
 
-    # 9) Train the network.
-    epochs = 10  # Increase as needed.
+    # Train the network
+    epochs = 100  # Increased from a smaller number (e.g., 10) for better learning
     for epoch in range(epochs):
         optimizer.zero_grad()
         outputs = model(X)
         loss = criterion(outputs, y)
         loss.backward()
         optimizer.step()
-        print(f"Epoch {epoch + 1}/{epochs}, Loss: {loss.item():.4f}")
+        if (epoch + 1) % 10 == 0:
+            print(f"Epoch {epoch + 1}/{epochs}, Loss: {loss.item():.4f}")
 
-    # 10) Save the trained model to the data folder.
-    model_save_path = "data/static_policy_model.pth"
-    torch.save(model.state_dict(), model_save_path)
-    print(f"Static policy model trained and saved as {model_save_path}")
+    # Save the trained model
+    torch.save(model.state_dict(), "data/static_policy_model.pth")
+    print("Static policy model trained and saved as data/static_policy_model.pth")
+
+    # Calculate and report training time
+    train_time = time.time() - start_time
+    print(f"Total training time: {train_time:.2f} seconds")
 
 
 if __name__ == "__main__":
