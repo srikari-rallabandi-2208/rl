@@ -1,8 +1,13 @@
 """
 rl_agent.py
 
-This module defines the RL agent using a REINFORCE-style policy gradient.
-It includes the policy network definition and the agent class.
+Defines the RL agent using a REINFORCE-style policy gradient.
+Includes the policy network and the agent class, with copious comments
+for clarity. The agent learns an optimal conversion policy for the
+convertible bond environment.
+
+Example usage:
+    (Imported and used within main_rl.py)
 """
 
 import torch
@@ -14,9 +19,8 @@ import os
 
 class PolicyNetwork(nn.Module):
     """
-    A simple feed-forward neural network that maps a normalized state to logits.
-    The state is normalized by scaling the stock price and PDE price by 100.
-    Output: logits for two actions (hold or convert).
+    A feed-forward neural network that maps a normalized [S, t, PDE_price] state to logits.
+    Output dimension = 2 => (hold, convert).
     """
 
     def __init__(self, input_dim=3, hidden_dim=32, output_dim=2):
@@ -27,7 +31,7 @@ class PolicyNetwork(nn.Module):
         self._init_weights()
 
     def _init_weights(self):
-        # Initialize weights using Xavier uniform initialization.
+        # Xavier Uniform initialization is often a good default for MLPs
         nn.init.xavier_uniform_(self.fc1.weight)
         nn.init.zeros_(self.fc1.bias)
         nn.init.xavier_uniform_(self.fc2.weight)
@@ -36,6 +40,7 @@ class PolicyNetwork(nn.Module):
         nn.init.zeros_(self.fc3.bias)
 
     def forward(self, x):
+        # Simple two-layer ReLU network
         x = torch.relu(self.fc1(x))
         x = torch.relu(self.fc2(x))
         return self.fc3(x)
@@ -43,100 +48,97 @@ class PolicyNetwork(nn.Module):
 
 class PolicyGradientAgent:
     """
-    Implements a REINFORCE policy gradient agent.
-    Stores log probabilities and rewards during an episode and updates the policy at episode end.
+    REINFORCE policy gradient agent:
+    - Stores log probabilities and rewards during an episode
+    - Updates the policy at the end of each episode
     """
 
     def __init__(self, input_dim=3, hidden_dim=32, output_dim=2, lr=1e-3, gamma=0.99):
         self.gamma = gamma
         self.policy_net = PolicyNetwork(input_dim, hidden_dim, output_dim)
         self.optimizer = optim.Adam(self.policy_net.parameters(), lr=lr)
+        # We store the log probabilities and rewards from each step
         self.log_probs = []
         self.rewards = []
 
     def select_action(self, state):
-        # Normalize state to prevent extreme values
+        """
+        Select an action given the current state.
+        State is [S, t, PDE_price].
+        We normalize stock price and PDE price by 100.
+        """
         norm_state = np.array([state[0] / 100.0, state[1], state[2] / 100.0], dtype=np.float32)
 
-        # Check for NaN or infinite values in the state
-        if np.any(np.isnan(norm_state)) or np.any(np.isinf(norm_state)):
-            print("Warning: State contains NaN or Inf:", state)
-            return 0  # Default action (e.g., hold)
-
-        # Convert to tensor and get logits
+        # Convert to a torch tensor
         state_t = torch.FloatTensor(norm_state).unsqueeze(0)
+
+        # Forward pass => get logits
         logits = self.policy_net(state_t)
 
-        # Check for NaN in logits
-        if torch.isnan(logits).any():
-            print("Warning: Logits contain NaN. State:", norm_state, "Logits:", logits)
-            return 0  # Default action (e.g., hold)
-
-        # Compute probabilities and sample action
+        # Softmax to get action probabilities
         probs = torch.softmax(logits, dim=1)
+
+        # Sample an action from the categorical distribution
         dist = torch.distributions.Categorical(probs)
         action = dist.sample()
+
+        # Store the log probability for future gradient calculation
         self.log_probs.append(dist.log_prob(action))
+
         return action.item()
 
     def store_reward(self, reward):
-        """Stores the reward for the current timestep."""
+        """
+        Store the reward at each step so we can do a full-episode update.
+        """
         self.rewards.append(reward)
 
     def update_policy(self):
         """
-        Updates the policy network using the REINFORCE algorithm.
-        Computes discounted returns, normalizes them, and performs a gradient step.
-        If dummy log probabilities were used, the update is skipped.
+        REINFORCE update: compute discounted returns, multiply by log probs, and do a gradient step.
         """
+        # Skip update if no rewards
         if not self.rewards:
             return
 
-        if any(not lp.requires_grad for lp in self.log_probs):
-            print("Skipping policy update due to dummy log probabilities.")
-            self.log_probs.clear()
-            self.rewards.clear()
-            return
-
+        # 1. Compute discounted returns
         discounted_returns = []
         R = 0
         for r in reversed(self.rewards):
             R = r + self.gamma * R
             discounted_returns.insert(0, R)
+
         discounted_returns = torch.FloatTensor(discounted_returns)
-        std = discounted_returns.std()
-        if std < 1e-8:
-            normalized_returns = discounted_returns
-        else:
-            normalized_returns = (discounted_returns - discounted_returns.mean()) / (std + 1e-8)
+        # Normalize returns to stabilize training
+        if discounted_returns.std() > 1e-8:
+            discounted_returns = (discounted_returns - discounted_returns.mean()) / (discounted_returns.std() + 1e-8)
 
-        loss_list = []
-        for log_prob, Gt in zip(self.log_probs, normalized_returns):
-            loss_list.append(-log_prob * Gt)
-        if not loss_list:
-            print("Warning: No valid log probabilities; skipping update.")
-            self.log_probs.clear()
-            self.rewards.clear()
-            return
-        loss = torch.stack(loss_list).sum()
+        # 2. Compute the policy gradient loss
+        loss = []
+        for log_prob, ret in zip(self.log_probs, discounted_returns):
+            loss.append(-log_prob * ret)
+        loss = torch.stack(loss).sum()
 
+        # 3. Take an optimization step
         self.optimizer.zero_grad()
         loss.backward()
         torch.nn.utils.clip_grad_norm_(self.policy_net.parameters(), max_norm=1.0)
         self.optimizer.step()
+
+        # 4. Clear stored rewards and log probabilities
         self.log_probs.clear()
         self.rewards.clear()
 
-    def save_model(self, path="policy_model.pth"):
+    def save_model(self, path="data/policy_model.pth"):
         """
-        Saves the model parameters to disk.
+        Save the policy network's parameters.
         """
         torch.save(self.policy_net.state_dict(), path)
         print(f"Model saved to {path}")
 
-    def load_model(self, path="policy_model.pth"):
+    def load_model(self, path="data/policy_model.pth"):
         """
-        Loads model parameters from disk.
+        Load previously saved model parameters.
         """
         if os.path.exists(path):
             self.policy_net.load_state_dict(torch.load(path))
@@ -144,11 +146,3 @@ class PolicyGradientAgent:
             print(f"Model loaded from {path}")
         else:
             raise FileNotFoundError(f"Model file {path} does not exist.")
-
-
-if __name__ == "__main__":
-    # Quick test to ensure the policy network runs.
-    agent = PolicyGradientAgent()
-    sample_state = [100, 0.0, 100]  # Example state: [stock price, time, PDE price]
-    action = agent.select_action(sample_state)
-    print("Selected action:", action)

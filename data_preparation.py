@@ -1,8 +1,11 @@
 """
 data_preparation.py
 
-This module reads the synthetic data and renames columns to match the expected
+Reads the synthetic data and renames columns to match the expected
 input for a convertible bond pricing model, then saves the prepared data as an Excel file.
+
+Example usage:
+    python data_preparation.py
 """
 
 import pandas as pd
@@ -10,36 +13,39 @@ import pandas as pd
 
 def prepare_synthetic_data(input_file="data/synthetic_data.xlsx", output_file="data/prepared_data.xlsx"):
     """
-    Prepare synthetic data by renaming columns for pricing model compatibility.
+    Prepare synthetic data by renaming columns for the pricing model's compatibility.
 
     Parameters:
-        input_file (str): Path to the input Excel file (default: "data/synthetic_data.xlsx").
-        output_file (str): Path to save the prepared Excel file (default: "data/prepared_data.xlsx").
+    -----------
+    input_file : str
+        Path to the input Excel file containing raw synthetic data.
+    output_file : str
+        Path to save the prepared Excel file.
 
     Returns:
-        None: Saves the prepared data to an Excel file.
+    --------
+    None
+        The resulting DataFrame is saved to an Excel file at 'output_file'.
     """
-    # Read the synthetic data
+    # 1. Read the synthetic data from Excel
     df = pd.read_excel(input_file)
 
-    # Rename columns to match typical pricing model expectations
+    # 2. Rename columns to match typical convertible bond pricing model inputs
     df = df.rename(columns={
         "bond_price": "Pr",          # Bond price
-        "ivol": "IVOL",              # Implied volatility
-        "cds": "CDS",                # Credit default spread
-        "stock_price": "S",          # Stock price
+        "ivol": "IVOL",              # Implied volatility (as a percentage, e.g. 30 => 30%)
+        "cds": "CDS",                # Credit default spread (in basis points)
+        "stock_price": "S",          # Underlying stock price
         "interest_rate": "r",        # Risk-free rate
-        "ttm_days": "ttm_days",      # Time-to-maturity in days (kept as-is)
+        "ttm_days": "ttm_days",      # Keep time-to-maturity in days
         "coupon_rate": "cp",         # Coupon rate
-        "coupon_frequency": "cfq",   # Coupon frequency
+        "coupon_frequency": "cfq",   # Coupon frequency (2 => semiannual, 4 => quarterly, etc.)
         "conversion_price": "cv",    # Conversion price
         "dividend": "d"              # Dividend yield
     })
+    # 'conversion_ratio', 'issuance_date', and 'first_coupon_date' remain unchanged but stay in the DataFrame.
 
-    # Note: "conversion_ratio" and date columns ("issuance_date", "first_coupon_date") are kept unchanged
-    # as they may be used differently depending on the model
-
-    # Save the prepared data
+    # 3. Save the prepared data
     df.to_excel(output_file, index=False)
     print(f"Prepared data saved to {output_file}")
 
