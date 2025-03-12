@@ -10,7 +10,6 @@ The generated plots are saved as PNG files in the data folder.
 """
 
 import matplotlib.pyplot as plt
-import numpy as np
 
 
 def plot_comparison_online_rl(times, stock_prices, pde_prices, rl_decisions, filename="data/online_rl_comparison.png"):
