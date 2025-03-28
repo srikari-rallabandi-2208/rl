@@ -12,26 +12,13 @@ No references to PDE columns here; it just deals with the environment's
 state dimension (input_dim) and the discrete action space (num_actions).
 """
 
-"""
-rl_price_predict.py
-
-Same as before, unmodified except for docstring clarifications.
-
-We've included a bit more commentary to clarify each step.
-"""
-
-import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
+import numpy as np
 
 class PricePredictNetwork(nn.Module):
-    def __init__(self, input_dim=5, num_actions=20, hidden_dim=64):
-        """
-        Basic feed-forward net:
-         - input_dim=5 => we pass in [CDS,IVOL,S,r,ttm_days].
-         - output_dim=num_actions => discrete PDE guesses.
-        """
+    def __init__(self, input_dim=5, num_actions=50, hidden_dim=64):
         super().__init__()
         self.fc1 = nn.Linear(input_dim, hidden_dim)
         self.fc2 = nn.Linear(hidden_dim, num_actions)
@@ -41,7 +28,8 @@ class PricePredictNetwork(nn.Module):
         return self.fc2(x)
 
 class PricePredictAgent:
-    def __init__(self, input_dim=5, num_actions=20, hidden_dim=64, lr=1e-3, gamma=0.99):
+    def __init__(self, input_dim=5, num_actions=50, hidden_dim=64,
+                 lr=1e-3, gamma=0.99):
         self.gamma = gamma
         self.num_actions = num_actions
         self.policy_net = PricePredictNetwork(input_dim, num_actions, hidden_dim)
@@ -51,13 +39,14 @@ class PricePredictAgent:
 
     def select_action(self, state):
         """
-        Forward pass => softmax => pick discrete PDE bucket.
+        Given a state, produce action in [0..num_actions-1].
         """
         state_t = torch.FloatTensor(state).unsqueeze(0)
         logits = self.policy_net(state_t)
         probs = torch.softmax(logits, dim=1)
         dist = torch.distributions.Categorical(probs)
         action = dist.sample()
+
         self.log_probs.append(dist.log_prob(action))
         return action.item()
 
@@ -66,24 +55,20 @@ class PricePredictAgent:
 
     def update_policy(self):
         """
-        Basic REINFORCE:
-         - discounted returns
-         - multiply by log_probs
-         - gradient ascent
+        REINFORCE: sum of discounted returns.
         """
         discounted = []
         R = 0.0
         for r in reversed(self.rewards):
             R = r + self.gamma*R
             discounted.insert(0, R)
-
         discounted_t = torch.FloatTensor(discounted)
         if discounted_t.std() > 1e-6:
             discounted_t = (discounted_t - discounted_t.mean())/(discounted_t.std()+1e-6)
 
         losses = []
-        for lp, Gt in zip(self.log_probs, discounted_t):
-            losses.append(-lp * Gt)
+        for logp, Gt in zip(self.log_probs, discounted_t):
+            losses.append(-logp * Gt)
         loss = torch.stack(losses).sum()
 
         self.optimizer.zero_grad()
@@ -92,4 +77,3 @@ class PricePredictAgent:
 
         self.log_probs.clear()
         self.rewards.clear()
-
