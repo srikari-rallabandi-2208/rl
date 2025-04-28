@@ -411,11 +411,12 @@ class DDPGAgent:
             return  # not enough data
 
         batch = self.replay.sample_batch(batch_size)
-        s = batch['s']
-        a = batch['a']
-        r = batch['r']
-        s2 = batch['s2']
-        d = batch['d']
+        # Convert everything to tf tensors
+        s = tf.convert_to_tensor(batch['s'], dtype=tf.float32)
+        a = tf.convert_to_tensor(batch['a'], dtype=tf.float32)
+        r = tf.convert_to_tensor(batch['r'], dtype=tf.float32)
+        s2 = tf.convert_to_tensor(batch['s2'], dtype=tf.float32)
+        d = tf.convert_to_tensor(batch['d'], dtype=tf.float32)
 
         # 1) Critic update
         with tf.GradientTape() as tape:
